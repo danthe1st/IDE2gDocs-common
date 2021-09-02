@@ -14,7 +14,6 @@ import com.google.api.client.json.JsonFactory;
 import com.google.api.client.json.gson.GsonFactory;
 import com.google.api.services.docs.v1.Docs;
 import com.google.api.services.docs.v1.DocsScopes;
-import com.intellij.ide.util.PropertiesComponent;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -53,12 +52,11 @@ public class GoogleDocsUploaderFactory {
 
 	private Credential getCredential(GoogleAuthorizationCodeFlow flow, NetHttpTransport httpTransport,
 	                                 Details authDetails) throws IOException {
-		String accessToken = PropertiesComponent.getInstance().getValue("ij2gdocs.accessToken");
 		Credential cred=credentialStorage.loadCredential(new Credential.Builder(BearerToken.authorizationHeaderAccessMethod())
 				.setJsonFactory(JSON_FACTORY).setTransport(httpTransport)
 				.setClientAuthentication(new ClientParametersAuthentication(authDetails.getClientId(),
 						authDetails.getClientSecret())));
-		if(accessToken == null) {
+		if(cred == null) {
 			cred = new AuthorizationCodeInstalledApp(flow, receiver).authorize("user");
 			credentialStorage.saveCredential(cred);
 		}
