@@ -101,7 +101,7 @@ public class GoogleDocsUploader {
 		}
 	}
 
-	private List <Request> buildOverwriteRequests(String newPart, int firstIndex, int lastIndex) {
+	private static List<Request> buildOverwriteRequests(String newPart, int firstIndex, int lastIndex) {
 		List <Request> req = new ArrayList <>();
 		if(lastIndex >= firstIndex) {
 			req.add(new Request().setDeleteContentRange(
