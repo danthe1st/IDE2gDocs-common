@@ -1,41 +1,33 @@
 package io.github.danthe1st.ide2gdocs.gdocs;
 
+import com.google.api.client.googleapis.auth.oauth2.GoogleClientSecrets.Details;
+import com.google.api.services.docs.v1.Docs;
+import com.google.api.services.docs.v1.model.*;
+
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Queue;
-import java.util.concurrent.*;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.function.Consumer;
-
-import com.google.api.client.googleapis.auth.oauth2.GoogleClientSecrets.Details;
-import com.google.api.services.docs.v1.Docs;
-import com.google.api.services.docs.v1.model.BatchUpdateDocumentRequest;
-import com.google.api.services.docs.v1.model.BatchUpdateDocumentResponse;
-import com.google.api.services.docs.v1.model.DeleteContentRangeRequest;
-import com.google.api.services.docs.v1.model.Document;
-import com.google.api.services.docs.v1.model.InsertTextRequest;
-import com.google.api.services.docs.v1.model.Location;
-import com.google.api.services.docs.v1.model.Range;
-import com.google.api.services.docs.v1.model.Request;
-import com.google.api.services.docs.v1.model.Response;
-import com.google.api.services.docs.v1.model.StructuralElement;
 
 public class GoogleDocsUploader {
 
 	private static final int MAX_QUEUE_SIZE = 10;//TODO make this configurable
 
-	private final BlockingQueue <Runnable> workQueue = new LinkedBlockingQueue <>();
-	private final ExecutorService threadPool = new ThreadPoolExecutor(1, 1, 0L, TimeUnit.MILLISECONDS, workQueue);//important: just a single thread
+	private final BlockingQueue<GoogleDocsUpdateRequest> requestsToProcess = new LinkedBlockingQueue<>();
+	private final Thread worker = new Thread(this::work);//TODO stop worker at some point
+
 	private final Docs service;
 	private Document doc;
 	private int startIndex;
-	private int lastLen;
-	private int lastHashCode = -1;
-	private volatile boolean dirty;
-
+	private DocumentStats currentStats;
+	private boolean dirty;
 
 	public GoogleDocsUploader(Docs service) {
 		this.service = service;
+		worker.setDaemon(true);
+		worker.start();
 	}
 
 	public static Details getCredentialDetails(String clientId, String clientSecret) {
@@ -46,120 +38,95 @@ public class GoogleDocsUploader {
 	}
 
 	public synchronized void setDocument(String id) throws IOException {
-		//TODO fix thread safety with actual worker functions
 		doc = service.documents().get(id).execute();
 		startIndex = getLastIndex() - 1;
-		lastLen = 0;
-		lastHashCode = -1;
+		currentStats =new DocumentStats(0);
 	}
 
-	public synchronized void overwritePart(String newPart, int offset, int oldLen, String fullText, Consumer <IOException> exceptionHandler) {
-		if(dirty || workQueue.size() >= MAX_QUEUE_SIZE) {
+	private synchronized Document getDoc() {
+		return doc;
+	}
+
+	public synchronized void overwritePart(String newPart, int offset, int oldLen, String fullText, Consumer<IOException> exceptionHandler) {
+		if(dirty || requestsToProcess.size() >= MAX_QUEUE_SIZE) {
 			overwriteEverything(fullText, exceptionHandler);
 		} else {
-			threadPool.submit(() -> {
-				try {
-					actuallyOverwritePart(newPart, offset, oldLen, fullText.hashCode());
-				} catch(IOException e) {
-					exceptionHandler.accept(e);
-				}
-			});
+			int newFullTextHashCode = fullText.hashCode();
+			requestsToProcess.add(new GoogleDocsUpdateRequest(newPart,offset,oldLen,exceptionHandler, stats->stats.incrementLenAndSetHashCode(countLengthWithoutWindowsLineBreaks(newPart) - oldLen,newFullTextHashCode)));
 		}
 	}
 
-	public synchronized void overwriteEverything(String newText, Consumer <IOException> exceptionHandler) {
-		workQueue.clear();
-		threadPool.submit(() -> {
+	public synchronized void overwriteEverything(String newText, Consumer<IOException> exceptionHandler) {
+		requestsToProcess.clear();
+		int hashCode = newText.hashCode();
+		Consumer<IOException> newExceptionHandler = e -> {
 			try {
-				actuallyOverwriteEverything(newText);
-			} catch(IOException e) {
-				exceptionHandler.accept(e);
+				doc = service.documents().get(getDoc().getDocumentId()).execute();
+			} catch(IOException ex) {
+				ex.printStackTrace();
 			}
-		});
-	}
-
-	private void actuallyOverwritePart(String newPart, int offset, int oldPartLen, int newFullTextHashCode) throws IOException {
-
-		if(lastHashCode == newFullTextHashCode) {
-			return;
-		}
-		int firstIndex = startIndex + offset;
-		int lastIndex = startIndex + oldPartLen + offset - 1;
-		List <Request> req = buildOverwriteRequests(newPart, firstIndex, lastIndex);
-
-		if(!req.isEmpty()) {
-			try {
-				executeMultiple(req);
-				lastLen += countLengthWithoutWindowsLineBreaks(newPart) - oldPartLen;
-				lastHashCode = newFullTextHashCode;
-			} catch(IOException e) {
-				dirty = true;
-				lastHashCode = -1;
-				throw e;
-			}
-
-		}
-	}
-
-	private static List<Request> buildOverwriteRequests(String newPart, int firstIndex, int lastIndex) {
-		List <Request> req = new ArrayList <>();
-		if(lastIndex >= firstIndex) {
-			req.add(new Request().setDeleteContentRange(
-					new DeleteContentRangeRequest().setRange(new Range().setStartIndex(firstIndex).setEndIndex(lastIndex+1))));
-		}
-		if(!newPart.isEmpty()) {
-			req.add(new Request().setInsertText(new InsertTextRequest().setText(newPart).setLocation(new Location().setIndex(firstIndex))));
-		}
-		return req;
-	}
-
-	private void actuallyOverwriteEverything(String newText) throws IOException {
-		try {
-			int hashCode = newText.hashCode();
-			if(lastHashCode == hashCode) {
-				return;
-			}
-			int firstIndex = startIndex;
-			int lastIndex = startIndex + lastLen - 1;
-			List <Request> req = buildOverwriteRequests(newText, firstIndex, lastIndex);
-			if(!req.isEmpty()) {
-				executeMultiple(req);
-				lastLen = countLengthWithoutWindowsLineBreaks(newText);
-				lastHashCode = hashCode;
-				dirty = false;
-			}
-		} catch(IOException e) {
-			doc = service.documents().get(doc.getDocumentId()).execute();
-			startIndex = Math.min(startIndex, getLastIndex());
-			lastLen = getLastIndex() - startIndex;
-			lastHashCode = -1;
-			dirty = true;
-			throw e;
-		}
+			int docEndIndex = getLastIndex();
+			startIndex = Math.min(startIndex, docEndIndex);
+			currentStats=new DocumentStats(docEndIndex - startIndex - 1);
+			exceptionHandler.accept(e);
+		};
+		requestsToProcess.add(new GoogleDocsUpdateRequest(newText,0,-1,newExceptionHandler, stats->new DocumentStats(countLengthWithoutWindowsLineBreaks(newText),hashCode)));
+		dirty = false;
 	}
 
 	private static int countLengthWithoutWindowsLineBreaks(String toCount) {
 		char[] chars = toCount.toCharArray();
 		char lastChar = '\0';
 		int ret = 0;
-		for(int i = 0; i < chars.length; i++) {
-			if(lastChar != '\r' || chars[i] != '\n') {
+		for(char c : chars) {
+			if(lastChar != '\r' || c != '\n') {
 				ret++;
 			}
-			lastChar = chars[i];
+			lastChar = c;
 		}
 		return ret;
 	}
 
 	private int getLastIndex() {
-		List <StructuralElement> content = doc.getBody().getContent();
+		List<StructuralElement> content = getDoc().getBody().getContent();
 		return content.get(content.size() - 1).getEndIndex();
 	}
 
-	private List <Response> executeMultiple(List <Request> requests) throws IOException {
+	private void work() {
+		while(!Thread.currentThread().isInterrupted()) {
+			List<GoogleDocsUpdateRequest> copy = new ArrayList<>();
+			try {
+				copy.add(requestsToProcess.take());
+				requestsToProcess.drainTo(copy);
+				List<Request> req = new ArrayList<>();
+				DocumentStats stats=currentStats;
+				for(GoogleDocsUpdateRequest ur : copy) {
+					int allContentLen = stats.getLen();
+					req.addAll(ur.buildRequests(startIndex, allContentLen));
+					stats = ur.getNewStats(stats);
+				}
+				if(!req.isEmpty()){
+					executeMultiple(req);
+				}
+				synchronized(this){
+					currentStats=stats;
+				}
+			} catch(InterruptedException e) {
+				Thread.currentThread().interrupt();
+			} catch(IOException e) {
+				synchronized(this) {
+					dirty = true;
+					copy.get(0).getExceptionHandler().accept(e);
+					copy.clear();
+				}
+			}
+		}
+	}
+
+	private List<Response> executeMultiple(List<Request> requests) throws IOException {
 		BatchUpdateDocumentRequest body = new BatchUpdateDocumentRequest().setRequests(requests);
 
-		BatchUpdateDocumentResponse response = service.documents().batchUpdate(doc.getDocumentId(), body).execute();
+		BatchUpdateDocumentResponse response = service.documents().batchUpdate(getDoc().getDocumentId(), body).execute();
 		return response.getReplies();
 	}
 }
