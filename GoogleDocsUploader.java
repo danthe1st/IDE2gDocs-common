@@ -63,7 +63,7 @@ public class GoogleDocsUploader {
 			try {
 				doc = service.documents().get(getDoc().getDocumentId()).execute();
 			} catch(IOException ex) {
-				ex.printStackTrace();
+				e.addSuppressed(ex);
 			}
 			int docEndIndex = getLastIndex();
 			startIndex = Math.min(startIndex, docEndIndex);
@@ -99,11 +99,14 @@ public class GoogleDocsUploader {
 				copy.add(requestsToProcess.take());
 				requestsToProcess.drainTo(copy);
 				List<Request> req = new ArrayList<>();
-				DocumentStats stats=currentStats;
-				for(GoogleDocsUpdateRequest ur : copy) {
-					int allContentLen = stats.getLen();
-					req.addAll(ur.buildRequests(startIndex, allContentLen));
-					stats = ur.getNewStats(stats);
+				DocumentStats stats;
+				synchronized(this){
+					stats = currentStats;
+					for(GoogleDocsUpdateRequest ur : copy) {
+						int allContentLen = stats.getLen();
+						req.addAll(ur.buildRequests(startIndex, allContentLen));
+						stats = ur.getNewStats(stats);
+					}
 				}
 				if(!req.isEmpty()){
 					executeMultiple(req);
