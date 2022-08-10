@@ -5,6 +5,7 @@
 	<version>1.0.0</version>
 	<name>IDE2gDocs-Common</name>
 	<description>Common Code for IDE2gDocs</description>
+	<packaging>bundle</packaging>
 	<dependencies>
 		<!-- Google Docs -->
 		<dependency>
@@ -57,6 +58,38 @@
 				<configuration>
 					<source>8</source>
 					<target>8</target>
+				</configuration>
+			</plugin>
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-dependency-plugin</artifactId>
+				<version>2.8</version>
+				<executions>
+					<execution>
+						<id>copy-dependencies</id>
+						<phase>prepare-package</phase>
+						<goals>
+							<goal>copy-dependencies</goal>
+						</goals>
+					</execution>
+				</executions>
+			</plugin>
+			<plugin>
+				<groupId>org.apache.felix</groupId>
+				<artifactId>maven-bundle-plugin</artifactId>
+				<version>3.5.0</version>
+				<extensions>true</extensions>
+				<configuration>
+					<manifestLocation>META-INF</manifestLocation>
+					<instructions>
+						<Bundle-SymbolicName>${project.groupId}.${project.artifactId}</Bundle-SymbolicName>
+						<Bundle-Version>${project.version}</Bundle-Version>
+						<Export-Package>*</Export-Package>
+						<Embed-Dependency>*;scope=compile|runtime</Embed-Dependency>
+						<Embed-Directory>target/dependency</Embed-Directory>
+						<Embed-StripGroup>true</Embed-StripGroup>
+						<Embed-Transitive>true</Embed-Transitive>
+					</instructions>
 				</configuration>
 			</plugin>
 		</plugins>
