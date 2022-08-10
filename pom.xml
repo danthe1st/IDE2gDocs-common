@@ -5,7 +5,7 @@
 	<version>1.0.0</version>
 	<name>IDE2gDocs-Common</name>
 	<description>Common Code for IDE2gDocs</description>
-	<packaging>bundle</packaging>
+	<packaging>jar</packaging>
 	<dependencies>
 		<!-- Google Docs -->
 		<dependency>
@@ -79,8 +79,18 @@
 				<artifactId>maven-bundle-plugin</artifactId>
 				<version>3.5.0</version>
 				<extensions>true</extensions>
+				<executions>
+					<execution>
+						<id>create-osgi-bundle</id>
+						<phase>package</phase>
+						<goals>
+							<goal>bundle</goal>
+						</goals>
+					</execution>
+				</executions>
 				<configuration>
 					<manifestLocation>META-INF</manifestLocation>
+					<classifier>osgi</classifier>
 					<instructions>
 						<Bundle-SymbolicName>${project.groupId}.${project.artifactId}</Bundle-SymbolicName>
 						<Bundle-Version>${project.version}</Bundle-Version>
